@@ -15,6 +15,7 @@ void *dlopen(const char *, int);
 void *dlsym(void *, const char *);
 int snprintf(char *, size_t, const char *, ...);
 int strcmp(const char *, const char *);
+size_t strlen(const char *);
 extern struct dispatch_queue_s _dispatch_main_q;
 uint64_t dispatch_time(uint64_t, int64_t);
 void dispatch_after_f(uint64_t, void *, void *, void (*)(void *));
@@ -177,10 +178,56 @@ static void pushModes(id vc) {
 }
 
 // 編輯位址
+static int hexv(char ch) {
+    int c = ch | 32;
+    return ch >= '0' && ch <= '9' ? ch - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+}
+// 輸入框每次修改後重排：只留 16 進位、轉大寫、最多 12 位，每兩位補「:」。
+// old 從 loc 起 len 個字被換成 repl；只刪掉「:」時連前一位一起刪（不然 backspace 會卡在冒號）
+static void formatMac(const char *old, size_t loc, size_t len, const char *repl, char out[18]) {
+    static const char H[] = "0123456789ABCDEF";
+    size_t ol = strlen(old);
+    if (loc > ol) loc = ol;
+    if (len > ol - loc) len = ol - loc;
+    bool onlyColon = !*repl && len > 0;
+    for (size_t i = loc; i < loc + len; i++)
+        if (hexv(old[i]) >= 0) onlyColon = false;
+    char d[12];
+    int n = 0, before = 0;
+    const char *part[3] = { old, repl, old + loc + len };
+    size_t plen[3] = { loc, strlen(repl), ol - loc - len };
+    for (int p = 0; p < 3; p++)
+        for (size_t i = 0; i < plen[p]; i++) {
+            int v = hexv(part[p][i]);
+            if (v < 0 || n == 12) continue; // 非法字元、超過 12 位都丟掉
+            d[n++] = H[v];
+            if (p == 0) before = n;
+        }
+    if (onlyColon && before > 0) {
+        for (int i = before - 1; i < n - 1; i++) d[i] = d[i + 1];
+        n--;
+    }
+    int o = 0;
+    for (int i = 0; i < n; i++) {
+        if (i && i % 2 == 0) out[o++] = ':';
+        out[o++] = d[i];
+    }
+    if (n && n % 2 == 0 && n < 12) out[o++] = ':';
+    out[o] = 0;
+}
+typedef struct { unsigned long loc, len; } NSRange;
+static bool macShouldChange(id self, SEL _cmd, id tf, NSRange r, id s) {
+    const char *old = MSG(const char *)(MSG(id)(tf, sel("text")), sel("UTF8String"));
+    const char *rep = MSG(const char *)(s, sel("UTF8String"));
+    char out[18];
+    formatMac(old ? old : "", r.loc, r.len, rep ? rep : "", out); // 內容只會是 ASCII，UTF-16 位置＝位元組位置
+    MSG(void, id)(tf, sel("setText:"), nsstr(out));
+    return false;
+}
 static bool parseMac(const char *s, uint8_t m[6]) {
     int n = 0, any = 0;
     for (; *s; s++) {
-        int c = *s | 32, v = *s >= '0' && *s <= '9' ? *s - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+        int v = hexv(*s);
         if (v < 0) {
             if (*s == ':' || *s == '-' || *s == ' ') continue;
             return false;
@@ -226,6 +273,10 @@ static void editField(id tf) {
     MSG(void, long)(tf, sel("setAutocapitalizationType:"), 3); // 全大寫
     MSG(void, long)(tf, sel("setAutocorrectionType:"), 1);     // 不自動修正
     MSG(void, long)(tf, sel("setClearButtonMode:"), 3);
+    MSG(void, long)(tf, sel("setKeyboardType:"), 1);           // 英數鍵盤
+    static id fieldDelegate;
+    if (!fieldDelegate) fieldDelegate = MSG(id)(MSG(id)(getClass("PMMacFieldDelegate"), sel("alloc")), sel("init"));
+    MSG(void, id)(tf, sel("setDelegate:"), fieldDelegate);
 }
 static void showEdit(id vc) {
     bool cur = MSG(bool)(MSG(id)(vc, sel("config")), sel("current"));
@@ -288,6 +339,9 @@ static void initSettings(void) {
     add(m, sel("tableView:titleForFooterInSection:"), (void *)modeFooter, "@@:@q");
     add(m, sel("tableView:didSelectRowAtIndexPath:"), (void *)modeSelect, "v@:@@");
     reg(m);
+    id fd = alloc(getClass("NSObject"), "PMMacFieldDelegate", 0);
+    add(fd, sel("textField:shouldChangeCharactersInRange:replacementString:"), (void *)macShouldChange, "B@:@{_NSRange=QQ}@");
+    reg(fd);
     hookMsg(vc, sel("tableView:cellForRowAtIndexPath:"), (void *)hookCell, (void **)&origCell);
     hookMsg(vc, sel("tableView:didSelectRowAtIndexPath:"), (void *)hookSelect, (void **)&origSelect);
     hookMsg(vc, sel("_randomMACFooterTextToDisplay"), (void *)hookFooter, (void **)&origFooter);
@@ -319,6 +373,11 @@ int main(void) {
     int ok = parseMac("02:11:22:33:44:5f", m) && m[0] == 0x02 && m[5] == 0x5f && parseMac("0A-11-22-33-44-55", m) && m[0] == 0x0a &&
              parseMac("021122334455", m) && !parseMac("01:11:22:33:44:55", m) && !parseMac("00:00:00:00:00:00", m) &&
              !parseMac("02:11:22:33:44", m) && !parseMac("02:11:22:33:44:55:66", m) && !parseMac("02:11:22:33:44:5g", m);
+    char o[18];
+#define F(old, loc, len, rep, want) (formatMac(old, loc, len, rep, o), !strcmp(o, want))
+    ok = ok && F("", 0, 0, "a", "A") && F("A", 1, 0, "b", "AB:") && F("AB:", 2, 1, "", "A") && F("AB:C", 3, 1, "", "AB:") &&
+         F("AB:CD:EF:01:23:45", 17, 0, "6", "AB:CD:EF:01:23:45") && F("", 0, 0, "zz-0a:1b", "0A:1B:") && F("AB:", 3, 0, "g", "AB:") &&
+         F("AB:CD:EF", 0, 8, "", "") && F("AB:CD", 2, 1, "", "AC:D");
     return ok ? 0 : 1;
 }
 #endif

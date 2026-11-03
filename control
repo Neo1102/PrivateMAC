@@ -1,6 +1,6 @@
 Package: com.neo.privatemac
 Name: PrivateMAC
-Version: 1.0.0
+Version: 1.0.1
 Architecture: iphoneos-arm
 Description: iOS 14.8 專用 Wi-Fi 位址：關閉／固定／輪替（每次連線換新位址），WiFi 詳情頁點「Wi-Fi 位址」可自訂
 Maintainer: Neo
