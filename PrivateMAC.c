@@ -16,6 +16,7 @@ void *dlsym(void *, const char *);
 int snprintf(char *, size_t, const char *, ...);
 int strcmp(const char *, const char *);
 size_t strlen(const char *);
+long time(void *);
 extern struct dispatch_queue_s _dispatch_main_q;
 uint64_t dispatch_time(uint64_t, int64_t);
 void dispatch_after_f(uint64_t, void *, void *, void (*)(void *));
@@ -115,16 +116,25 @@ static void setRotate(id ssid, bool on) {
 }
 
 // ---------- SpringBoard：離開輪替的網路就換好下一次的位址 ----------
+#define ROTATE_MIN_INTERVAL 1800 // 同一個網路最多每 30 分鐘換一次，避免一直掉線重連時狂觸發同步 IPC 卡死主執行緒
 static id lastSSID;
+static id rotateTimes; // SSID -> NSNumber(上次換位址的 unix 秒數)
 static void (*origLink)(id, SEL);
 static void hookLink(id self, SEL _cmd) {
     origLink(self, _cmd);
     id now = MSG(bool)(self, sel("isAssociated")) ? MSG(id)(self, sel("currentNetworkName")) : 0;
     if (lastSSID && !(now && MSG(bool, id)(lastSSID, sel("isEqualToString:"), now))) {
         if (rotates(lastSSID)) {
-            uint8_t m[6];
-            randomMac(m);
-            setMac(lastSSID, m);
+            if (!rotateTimes) rotateTimes = MSG(id)(getClass("NSMutableDictionary"), sel("new"));
+            long t = time(0);
+            id lv = MSG(id, id)(rotateTimes, sel("objectForKey:"), lastSSID);
+            if (!lv || t - MSG(long)(lv, sel("longValue")) >= ROTATE_MIN_INTERVAL) {
+                uint8_t m[6];
+                randomMac(m);
+                setMac(lastSSID, m);
+                MSG(void, id, id)(rotateTimes, sel("setObject:forKey:"),
+                    MSG(id, long)(getClass("NSNumber"), sel("numberWithLong:"), t), lastSSID);
+            }
         }
         MSG(void)(lastSSID, sel("release"));
         lastSSID = 0;
