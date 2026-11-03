@@ -1,0 +1,11 @@
+--- !tapi-tbd-v3
+archs:           [ arm64, arm64e ]
+platform:        ios
+install-name:    /usr/lib/libSystem.B.dylib
+current-version: 1292.100.5
+exports:
+  - archs:           [ arm64, arm64e ]
+    symbols:         [ dyld_stub_binder, _dlopen, _dlsym, _fopen, _fclose, _fwrite, _vsnprintf, _snprintf, _time,
+                       _localtime_r, _strcmp, _strncmp, _strlen, _dispatch_after_f, _dispatch_time, __dispatch_main_q,
+                       _socket, _sendto, _bind, _recv, _fcntl, _connect, _poll, _getsockopt, _close, ___stack_chk_fail, ___stack_chk_guard, _memcpy, _memset, _bzero, __NSConcreteGlobalBlock ]
+...

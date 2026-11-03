@@ -1,0 +1,5 @@
+pkg/
+sdk/
+*.deb
+*.dylib
+pmtest
